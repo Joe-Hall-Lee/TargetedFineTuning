@@ -9,7 +9,7 @@ def convert_json_to_target_format(input_file, output_file):
     # Open the JSON file and read its contents
     with open(input_file, 'r') as file:
         data = json.load(file)
-        for item in data["arena"]:
+        for item in data["hh-rlhf"]:
             if item["result"]["orig"]["prediction"] == 1:
                 output = "Output (a)"
             elif item["result"]["orig"]["prediction"] == 2:

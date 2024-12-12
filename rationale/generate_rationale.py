@@ -4,9 +4,9 @@ from vllm import LLM, SamplingParams
 from transformers import AutoTokenizer
 
 
-def generate_reflection(result_file, distill_et_file, output_file, data_key, model_name, temperature, max_tokens):
+def generate_rationale(result_file, distill_et_file, output_file, data_key, model_name, temperature, max_tokens):
     """
-    生成反思，并构造指定格式的数据。
+    生成理由，并构造指定格式的数据。
 
     Args:
         result_file (str): 原始模型结果文件路径。
@@ -35,8 +35,12 @@ def generate_reflection(result_file, distill_et_file, output_file, data_key, mod
 
     # 构造 prompts 列表
     conversation_list = []
+    first = 0
+    updated_labels = []
+    updated_responses = []
 
     for item1, item2 in zip(data1[data_key], data2[data_key]):
+
         if item2["result"]["orig"]["prediction"] == 1:
             chosen = "Output (a)"
             rejected = "Output (b)"
@@ -57,13 +61,27 @@ def generate_reflection(result_file, distill_et_file, output_file, data_key, mod
         response1 = item1["response1"]
         response2 = item1["response2"]
 
+        if first == 0:
+            if chosen == "Output (b)":
+                chosen, rejected = rejected, chosen
+                response1, response2 = response2, response1
+            first = 1
+        elif first == 1:
+            if chosen == "Output (a)":
+                chosen, rejected = rejected, chosen
+                response1, response2 = response2, response1
+            first = 0
+
+        updated_labels.append((chosen, rejected))
+        updated_responses.append((response1, response2))
+
         # 处理原始模型的结果
         conversation = construct_prompt(
             instruction, response1, response2, chosen, rejected)
         conversation_list.append(conversation)
 
-
-    prompt_token_ids = [tokenizer.apply_chat_template(conversation, add_generation_prompt=True) for conversation in conversation_list]
+    prompt_token_ids = [tokenizer.apply_chat_template(
+        conversation, add_generation_prompt=True) for conversation in conversation_list]
 
     # Batch generate responses
     outputs = llm.generate(
@@ -78,18 +96,11 @@ def generate_reflection(result_file, distill_et_file, output_file, data_key, mod
 
     # 构造新数据
     formatted_data = []
-    for generated_text, item1, item2 in zip(generated_texts, data1[data_key], data2[data_key]):
-        if item2["result"]["orig"]["prediction"] == 1:
+    for generated_text, item1, (chosen, rejected), (response1, response2) in zip(generated_texts, data1[data_key], updated_labels, updated_responses):
+        if chosen == "Output (a)":
             output = generated_text + "\nTherefore, Output (a) is better."
-        elif item2["result"]["orig"]["prediction"] == 2:
-            output = generated_text + "\nTherefore, Output (b) is better."
         else:
-            if item1["result"]["orig"]["prediction"] == 1:
-                output = generated_text + "\nTherefore, Output (a) is better."
-            elif item1["result"]["orig"]["prediction"] == 2:
-                output = generated_text + "\nTherefore, Output (b) is better."
-            else:
-                continue
+            output = generated_text + "\nTherefore, Output (b) is better."
 
         # 构造符合格式的数据
         formatted_data.append({
@@ -109,10 +120,10 @@ Do NOT output any other words.
 {item1["instruction"]}
 
 # Output (a):
-{item1["response1"]}
+{response1}
 
 # Output (b):
-{item1["response2"]}
+{response2}
 
 # Decision (Give a brief explanation of your evaluation followed by either "Therefore, Output (a) is better." or "Therefore, Output (b) is better." verbatim. In your explanation, you should always use "Output (a)" or "Output (b)" to refer to the two outputs respectively.):""",
             "input": "",
@@ -149,7 +160,7 @@ Given that {chosen} is better than {rejected}, please provide the rationale with
 if __name__ == "__main__":
     # 使用 argparse 解析命令行参数
     parser = argparse.ArgumentParser(
-        description="Use vllm to generate reflections and format the data.")
+        description="Use vllm to generate rationales and format the data.")
     parser.add_argument("--result", type=str, required=True,
                         help="Path to the original model results JSON file.")
     parser.add_argument("--result_distill_et", type=str, required=True,
@@ -169,7 +180,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # 调用主函数
-    generate_reflection(
+    generate_rationale(
         result_file=args.result,
         distill_et_file=args.result_distill_et,
         output_file=args.output,
